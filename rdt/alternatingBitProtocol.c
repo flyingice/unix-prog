@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* ******************************************************************
  ALTERNATING BIT AND GO-BACK-N NETWORK EMULATOR: VERSION 1.1  J.F.Kurose
@@ -81,6 +82,12 @@ float lambda;      /* arrival rate of messages from layer 5 */
 int ntolayer3;     /* number sent into layer 3 */
 int nlost;         /* number lost in media */
 int ncorrupt;      /* number corrupted by media*/
+
+// global variable tracking the protocol state on both sides
+int timeout = 20.0;        /* timeout before a packet is resent */
+int isnA;                  /* inital sequence number of client */
+int isnB;                  /* inital sequence number of server */
+struct pkt lastSentA = {}; /* the most recent packet sent by client */
 
 /****************************************************************************/
 /* jimsrand(): return a float in range [0,1].  The routine below is used to */
@@ -177,6 +184,10 @@ void init() /* initialize the simulator */
   scanf("%f", &lossprob);
   printf("Enter packet corruption probability [0.0 for no corruption]:");
   scanf("%f", &corruptprob);
+  /*
+   * Recommend a value of 1000 so that your sender is never called while it still has an outstanding,
+   * unacknowledged message it is trying to send to the receiver.
+   */
   printf("Enter average time between messages from sender's layer5 [ > 0.0]:");
   scanf("%f", &lambda);
   printf("Enter TRACE:");
@@ -332,7 +343,18 @@ char datasent[20];
 
 /* called from layer 5, passed the data to be sent to other side */
 void A_output(message) struct msg message;
-{}
+{
+  // build a layer-3 packet from the layer-5 message
+  lastSentA.seqnum = isnA;
+  lastSentA.acknum = isnA;
+  lastSentA.checksum = 0;  // TODO: checksuming
+  for (int i = 0; i < 20; i++) {
+    lastSentA.payload[i] = message.data[i];
+  }
+
+  tolayer3(A, lastSentA);
+  starttimer(A, timeout);
+}
 
 void B_output(message) /* need be completed only for extra credit */
     struct msg message;
@@ -340,22 +362,60 @@ void B_output(message) /* need be completed only for extra credit */
 
 /* called from layer 3, when a packet arrives for layer 4 */
 void A_input(packet) struct pkt packet;
-{}
+{
+  // ignore the ack otherwise
+  if (packet.acknum == isnA) {
+    // change the client state
+    isnA ^= 1;
+    stoptimer(A);
+  }
+}
 
 /* called when A's timer goes off */
 void A_timerinterrupt() {
+  // client state remains the same
+  tolayer3(A, lastSentA);
+  starttimer(A, timeout);
 }
 
 /* the following routine will be called once (only) before any other */
 /* entity A routines are called. You can use it to do any initialization */
 void A_init() {
+  isnA = 0;
 }
 
 /* Note that with simplex transfer from a-to-B, there is no B_output() */
 
 /* called from layer 3, when a packet arrives for layer 4 at B*/
 void B_input(packet) struct pkt packet;
-{}
+{
+  // build the ack
+  struct pkt ack;
+  ack.seqnum = isnB;
+  ack.checksum = 0;  // TODO: checksuming
+  memset(ack.payload, 0, 20);
+
+  if (packet.acknum == isnB) {
+    // send back the ack to layer 3
+    ack.acknum = packet.acknum;
+    tolayer3(B, ack);
+
+    // push the payload to layer 5
+    struct msg message;
+    for (int i = 0; i < 20; i++) {
+      message.data[i] = packet.payload[i];
+    }
+    tolayer5(B, &message.data[0]);
+
+    // change the server state
+    isnB ^= 1;
+  }
+  else {
+    // resend the last ack
+    ack.acknum = isnB ^ 1;
+    tolayer3(B, ack);
+  }
+}
 
 /* called when B's timer goes off */
 void B_timerinterrupt() {
@@ -364,6 +424,7 @@ void B_timerinterrupt() {
 /* the following rouytine will be called once (only) before any other */
 /* entity B routines are called. You can use it to do any initialization */
 void B_init() {
+  isnB = 0;
 }
 
 int main() {
