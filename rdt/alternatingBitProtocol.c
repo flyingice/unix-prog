@@ -148,8 +148,8 @@ void generate_next_arrival() {
 
   if (TRACE > 2) printf("          GENERATE NEXT ARRIVAL: creating new arrival\n");
 
-  x = lambda * jimsrand() * 2; /* x is uniform on [0,2*lambda] */
-                               /* having mean of lambda        */
+  x = lambda * (jimsrand() + 1) * 2; /* x is uniform on [2*lambda,4*lambda] */
+                                     /* having mean of 3*lambda        */
   evptr = (struct event*)malloc(sizeof(struct event));
   evptr->evtime = time + x;
   evptr->evtype = FROM_LAYER5;
