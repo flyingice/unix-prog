@@ -83,8 +83,7 @@ int ntolayer3;     /* number sent into layer 3 */
 int nlost;         /* number lost in media */
 int ncorrupt;      /* number corrupted by media*/
 
-// global variable tracking the protocol state on both sides
-int timeout = 20.0;        /* timeout before a packet is resent */
+float timeout = 20.0;      /* timeout before a packet is resent */
 int isnA;                  /* inital sequence number of client */
 int isnB;                  /* inital sequence number of server */
 struct pkt lastSentA = {}; /* the most recent packet sent by client */
@@ -340,6 +339,25 @@ char datasent[20];
 }
 
 /********* STUDENTS WRITE THE NEXT SEVEN ROUTINES *********/
+char checksum(unsigned int i) {
+  char res = 0;
+  while (i) {
+    res += (i & 0xFF);
+    i >>= 8;
+  }
+  return res;
+}
+
+int compute_checksum(struct pkt packet) {
+  char res = 0;
+  res += checksum(packet.seqnum);
+  res += checksum(packet.acknum);
+  for (int i = 0; i < 20; i++) {
+    res += packet.payload[i];
+  }
+
+  return res;
+}
 
 /* called from layer 5, passed the data to be sent to other side */
 void A_output(message) struct msg message;
@@ -347,10 +365,10 @@ void A_output(message) struct msg message;
   // build a layer-3 packet from the layer-5 message
   lastSentA.seqnum = isnA;
   lastSentA.acknum = isnA;
-  lastSentA.checksum = 0;  // TODO: checksuming
   for (int i = 0; i < 20; i++) {
     lastSentA.payload[i] = message.data[i];
   }
+  lastSentA.checksum = compute_checksum(lastSentA);
 
   tolayer3(A, lastSentA);
   starttimer(A, timeout);
@@ -363,10 +381,13 @@ void B_output(message) /* need be completed only for extra credit */
 /* called from layer 3, when a packet arrives for layer 4 */
 void A_input(packet) struct pkt packet;
 {
-  // ignore the ack otherwise
-  if (packet.acknum == isnA) {
-    // change the client state
-    isnA ^= 1;
+  // check the integrity of the packet
+  if (compute_checksum(packet) != packet.checksum) {
+    printf("client ignores corrupted packet!\n");
+    // no action, which eventually triggers a timeout
+  }
+  else if (packet.acknum == isnA) {
+    isnA ^= 1;  // client state transition
     stoptimer(A);
   }
 }
@@ -392,27 +413,37 @@ void B_input(packet) struct pkt packet;
   // build the ack
   struct pkt ack;
   ack.seqnum = isnB;
-  ack.checksum = 0;  // TODO: checksuming
   memset(ack.payload, 0, 20);
 
-  if (packet.acknum == isnB) {
-    // send back the ack to layer 3
-    ack.acknum = packet.acknum;
-    tolayer3(B, ack);
+  if (compute_checksum(packet) == packet.checksum) {
+    if (packet.acknum == isnB) {
+      // send back the ack to layer 3
+      printf("server replies with ACK...\n");
+      ack.acknum = packet.acknum;
+      ack.checksum = compute_checksum(ack);
+      tolayer3(B, ack);
 
-    // push the payload to layer 5
-    struct msg message;
-    for (int i = 0; i < 20; i++) {
-      message.data[i] = packet.payload[i];
+      // push the payload to layer 5
+      struct msg message;
+      for (int i = 0; i < 20; i++) {
+        message.data[i] = packet.payload[i];
+      }
+      tolayer5(B, &message.data[0]);
+
+      isnB ^= 1;  // server state transition
     }
-    tolayer5(B, &message.data[0]);
-
-    // change the server state
-    isnB ^= 1;
+    else {
+      // resend the last ack
+      printf("server resends last ACK...\n");
+      ack.acknum = isnB ^ 1;
+      ack.checksum = compute_checksum(ack);
+      tolayer3(B, ack);
+    }
   }
-  else {
-    // resend the last ack
-    ack.acknum = isnB ^ 1;
+  else {  // the packet is corrupted, reply with NACK
+    printf("server receives corrupted packet and replies with NACK...\n");
+    ack.acknum = -1;
+    ack.checksum = compute_checksum(ack);
     tolayer3(B, ack);
   }
 }
