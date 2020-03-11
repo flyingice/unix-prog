@@ -354,7 +354,12 @@ void A_output(message) struct msg message;
     for (int i = 0; i < 20; i++) {
       packet.payload[i] = message.data[i];
     }
+    if (base == next) {
+      // a single timer for all the outstanding packets
+      starttimer(A, timeout);
+    }
     buffer[next++] = packet;
+    printf("client sends packet with seqnum %d\n", packet.seqnum);
     tolayer3(A, packet);
   }
   else {
@@ -371,12 +376,24 @@ void B_output(message) /* need be completed only for extra credit */
 void A_input(packet) struct pkt packet;
 {
   if (packet.acknum > base) {
+    printf("client is aware of acknowledgement up to %d\n", packet.acknum - 1);
     base = packet.acknum;
+    stoptimer(A);
+    if (base < next) {
+      // update the timer since there are still unacknowledged packets in the pipe
+      starttimer(A, timeout);
+    }
   }
 }
 
 /* called when A's timer goes off */
 void A_timerinterrupt() {
+  // resend all the packets within the current sliding window
+  starttimer(A, timeout);
+  for (int i = base; i < next; i++) {
+    printf("client resends packet with seqnum %d\n", i);
+    tolayer3(A, buffer[i]);
+  }
 }
 
 /* the following routine will be called once (only) before any other */
@@ -398,11 +415,13 @@ void B_input(packet) struct pkt packet;
   memset(ack.payload, 0, 20);
   if (packet.seqnum < expected) {
     // dup-ack
+    printf("server re-acknowledges packet with seqnum %d\n", packet.seqnum);
     ack.acknum = packet.seqnum + 1;
     tolayer3(B, ack);
   }
   else if (packet.seqnum == expected) {
     // ack
+    printf("server acknowledges packet with seqnum %d\n", packet.seqnum);
     ack.acknum = ++expected;
     tolayer3(B, ack);
     // push the data to layer 5
@@ -412,8 +431,11 @@ void B_input(packet) struct pkt packet;
     }
     tolayer5(B, &message.data[0]);
   }
-  // ignore the message otherwise since the server doesn't buffer the message
-  // with greater sequence number as selective-repeat protocol
+  else {
+    // ignore the message otherwise since the server doesn't buffer the message
+    // with greater sequence number as selective-repeat protocol
+    printf("server ignores packet with seqnum %d\n", packet.seqnum);
+  }
 }
 
 /* called when B's timer goes off */
