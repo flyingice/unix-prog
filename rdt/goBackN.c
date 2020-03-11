@@ -151,8 +151,8 @@ void generate_next_arrival() {
 
   if (TRACE > 2) printf("          GENERATE NEXT ARRIVAL: creating new arrival\n");
 
-  x = lambda * (jimsrand() + 1) * 2; /* x is uniform on [2*lambda,4*lambda] */
-                                     /* having mean of 3*lambda        */
+  x = lambda * jimsrand() * 2; /* x is uniform on [0,2*lambda] */
+                               /* having mean of lambda */
   evptr = (struct event*)malloc(sizeof(struct event));
   evptr->evtime = time + x;
   evptr->evtype = FROM_LAYER5;
@@ -342,24 +342,42 @@ char datasent[20];
 }
 
 /********* STUDENTS WRITE THE NEXT SEVEN ROUTINES *********/
+char checksum(unsigned int i) {
+  char res = 0;
+  while (i) {
+    res += (i & 0xFF);
+    i >>= 8;
+  }
+  return res;
+}
+
+int compute_checksum(struct pkt packet) {
+  char res = 0;
+  res += checksum(packet.seqnum);
+  res += checksum(packet.acknum);
+  for (int i = 0; i < 20; i++) {
+    res += packet.payload[i];
+  }
+  return res;
+}
 
 /* called from layer 5, passed the data to be sent to other side */
 void A_output(message) struct msg message;
 {
-  if (next < base + n) {  // within the slicing window
+  if (next < base + n) {  // within the sliding window
     struct pkt packet;
     packet.seqnum = next;
     packet.acknum = 0;
-    packet.checksum = 0;  // TODO
     for (int i = 0; i < 20; i++) {
       packet.payload[i] = message.data[i];
     }
+    packet.checksum = compute_checksum(packet);
     if (base == next) {
       // a single timer for all the outstanding packets
       starttimer(A, timeout);
     }
     buffer[next++] = packet;
-    printf("client sends packet with seqnum %d\n", packet.seqnum);
+    printf("[CLIENT] send packet with SEQ %d\n", packet.seqnum);
     tolayer3(A, packet);
   }
   else {
@@ -375,14 +393,23 @@ void B_output(message) /* need be completed only for extra credit */
 /* called from layer 3, when a packet arrives for layer 4 */
 void A_input(packet) struct pkt packet;
 {
-  if (packet.acknum > base) {
-    printf("client is aware of acknowledgement up to %d\n", packet.acknum - 1);
-    base = packet.acknum;
-    stoptimer(A);
-    if (base < next) {
-      // update the timer since there are still unacknowledged packets in the pipe
-      starttimer(A, timeout);
+  if (compute_checksum(packet) == packet.checksum) {
+    if (packet.acknum > base) {
+      printf("[CLIENT] confirm ACK up to %d\n", packet.acknum - 1);
+      base = packet.acknum;
+      stoptimer(A);
+      if (base < next) {
+        // update the timer since there are still unacknowledged packets in the pipe
+        starttimer(A, timeout);
+      }
     }
+    else {
+      printf("[CLIENT] ignore outdated ACK on SEQ %d\n", packet.acknum - 1);
+    }
+  }
+  else {
+    printf("[CLIENT] ignore corrupted ACK\n");
+    // do nothing, which eventually triggers a timeout
   }
 }
 
@@ -391,7 +418,7 @@ void A_timerinterrupt() {
   // resend all the packets within the current sliding window
   starttimer(A, timeout);
   for (int i = base; i < next; i++) {
-    printf("client resends packet with seqnum %d\n", i);
+    printf("[CLIENT] retry packet with SEQ %d\n", i);
     tolayer3(A, buffer[i]);
   }
 }
@@ -409,32 +436,39 @@ void A_init() {
 /* called from layer 3, when a packet arrives for layer 4 at B*/
 void B_input(packet) struct pkt packet;
 {
-  struct pkt ack = {};
-  ack.seqnum = 0;
-  ack.checksum = 0;  // TODO
-  memset(ack.payload, 0, 20);
-  if (packet.seqnum < expected) {
-    // dup-ack
-    printf("server re-acknowledges packet with seqnum %d\n", packet.seqnum);
-    ack.acknum = packet.seqnum + 1;
-    tolayer3(B, ack);
-  }
-  else if (packet.seqnum == expected) {
-    // ack
-    printf("server acknowledges packet with seqnum %d\n", packet.seqnum);
-    ack.acknum = ++expected;
-    tolayer3(B, ack);
-    // push the data to layer 5
-    struct msg message = {};
-    for (int i = 0; i < 20; i++) {
-      message.data[i] = packet.payload[i];
+  if (compute_checksum(packet) == packet.checksum) {
+    struct pkt ack = {};
+    ack.seqnum = 0;
+    memset(ack.payload, 0, 20);
+    if (packet.seqnum < expected) {
+      // dup-ack
+      printf("[SERVER] re-acknowledge packet with SEQ %d\n", packet.seqnum);
+      ack.acknum = packet.seqnum + 1;
+      ack.checksum = compute_checksum(ack);
+      tolayer3(B, ack);
     }
-    tolayer5(B, &message.data[0]);
+    else if (packet.seqnum == expected) {
+      // ack
+      printf("[SERVER] acknowledge packet with SEQ %d\n", packet.seqnum);
+      ack.acknum = ++expected;
+      ack.checksum = compute_checksum(ack);
+      tolayer3(B, ack);
+      // push the data to layer 5
+      struct msg message = {};
+      for (int i = 0; i < 20; i++) {
+        message.data[i] = packet.payload[i];
+      }
+      tolayer5(B, &message.data[0]);
+    }
+    else {
+      // ignore the message otherwise since the server doesn't buffer any message
+      // other than the expected one as the selective-repeat protocol
+      printf("[SERVER] ignore packet with SEQ %d\n", packet.seqnum);
+    }
   }
   else {
-    // ignore the message otherwise since the server doesn't buffer the message
-    // with greater sequence number as selective-repeat protocol
-    printf("server ignores packet with seqnum %d\n", packet.seqnum);
+    printf("[SERVER] ignore corrupted packet\n");
+    // do nothing, which eventually triggers a timeout of the client
   }
 }
 
