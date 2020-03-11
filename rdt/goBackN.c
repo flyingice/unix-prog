@@ -83,6 +83,14 @@ int ntolayer3;     /* number sent into layer 3 */
 int nlost;         /* number lost in media */
 int ncorrupt;      /* number corrupted by media*/
 
+static const int capacity = 50;   /* buffer capacity on client side */
+float timeout = 20.0;             /* timeout before a packet is resent */
+struct pkt buffer[capacity] = {}; /* packet buffer */
+int base;                         /* lower bound of the slicing window */
+int next;                         /* sequence number of the next packet to be sent */
+int n;                            /* size of the slicing window */
+int expected;                     /* the smallest sequence number to be acknowledged on server side */
+
 /****************************************************************************/
 /* jimsrand(): return a float in range [0,1].  The routine below is used to */
 /* isolate all random number generation in one location.  We assume that the*/
@@ -337,7 +345,23 @@ char datasent[20];
 
 /* called from layer 5, passed the data to be sent to other side */
 void A_output(message) struct msg message;
-{}
+{
+  if (next < base + n) {  // within the slicing window
+    struct pkt packet;
+    packet.seqnum = next;
+    packet.acknum = 0;
+    packet.checksum = 0;  // TODO
+    for (int i = 0; i < 20; i++) {
+      packet.payload[i] = message.data[i];
+    }
+    buffer[next++] = packet;
+    tolayer3(A, packet);
+  }
+  else {
+    printf("application is sending data too fast!\n");
+    exit(1);
+  }
+}
 
 void B_output(message) /* need be completed only for extra credit */
     struct msg message;
@@ -345,7 +369,11 @@ void B_output(message) /* need be completed only for extra credit */
 
 /* called from layer 3, when a packet arrives for layer 4 */
 void A_input(packet) struct pkt packet;
-{}
+{
+  if (packet.acknum > base) {
+    base = packet.acknum;
+  }
+}
 
 /* called when A's timer goes off */
 void A_timerinterrupt() {
@@ -354,13 +382,39 @@ void A_timerinterrupt() {
 /* the following routine will be called once (only) before any other */
 /* entity A routines are called. You can use it to do any initialization */
 void A_init() {
+  base = 0;
+  next = 0;
+  n = 8;
 }
 
 /* Note that with simplex transfer from a-to-B, there is no B_output() */
 
 /* called from layer 3, when a packet arrives for layer 4 at B*/
 void B_input(packet) struct pkt packet;
-{}
+{
+  struct pkt ack = {};
+  ack.seqnum = 0;
+  ack.checksum = 0;  // TODO
+  memset(ack.payload, 0, 20);
+  if (packet.seqnum < expected) {
+    // dup-ack
+    ack.acknum = packet.seqnum + 1;
+    tolayer3(B, ack);
+  }
+  else if (packet.seqnum == expected) {
+    // ack
+    ack.acknum = ++expected;
+    tolayer3(B, ack);
+    // push the data to layer 5
+    struct msg message = {};
+    for (int i = 0; i < 20; i++) {
+      message.data[i] = packet.payload[i];
+    }
+    tolayer5(B, &message.data[0]);
+  }
+  // ignore the message otherwise since the server doesn't buffer the message
+  // with greater sequence number as selective-repeat protocol
+}
 
 /* called when B's timer goes off */
 void B_timerinterrupt() {
@@ -369,6 +423,7 @@ void B_timerinterrupt() {
 /* the following rouytine will be called once (only) before any other */
 /* entity B routines are called. You can use it to do any initialization */
 void B_init() {
+  expected = 0;
 }
 
 int main() {
