@@ -1,11 +1,14 @@
 #ifndef PROG3_H_
 #define PROG3_H_
 
-#define LINKCHANGES 1
+#define LINKCHANGES 0
 
 /* possible events: */
 #define FROM_LAYER2 2
 #define LINK_CHANGE 10
+
+/* infinite costs between two nodes */
+#define INFINITY 999
 
 struct event {
   float evtime;           /* event time */

@@ -168,13 +168,13 @@ void tolayer2(packet) struct rtpkt packet;
   connectcosts[1][0] = 1;
   connectcosts[1][1] = 0;
   connectcosts[1][2] = 1;
-  connectcosts[1][3] = 999;
+  connectcosts[1][3] = INFINITY;
   connectcosts[2][0] = 3;
   connectcosts[2][1] = 1;
   connectcosts[2][2] = 0;
   connectcosts[2][3] = 2;
   connectcosts[3][0] = 7;
-  connectcosts[3][1] = 999;
+  connectcosts[3][1] = INFINITY;
   connectcosts[3][2] = 2;
   connectcosts[3][3] = 0;
 
@@ -191,7 +191,7 @@ void tolayer2(packet) struct rtpkt packet;
     printf("WARNING: source and destination id's the same, ignoring packet!\n");
     return;
   }
-  if (connectcosts[packet.sourceid][packet.destid] == 999) {
+  if (connectcosts[packet.sourceid][packet.destid] == INFINITY) {
     printf("WARNING: source and destination not connected, ignoring packet!\n");
     return;
   }
@@ -239,7 +239,7 @@ int main() {
     evlist = evlist->next; /* remove this event from event list */
     if (evlist != NULL) evlist->prev = NULL;
     if (TRACE > 1) {
-      printf("MAIN: rcv event, t=%.3f, at %d", eventptr->evtime, eventptr->eventity);
+      printf("MAIN: rcv event, t=%.3f, at %d\n", eventptr->evtime, eventptr->eventity);
       if (eventptr->evtype == FROM_LAYER2) {
         printf(" src:%2d,", eventptr->rtpktptr->sourceid);
         printf(" dest:%2d,", eventptr->rtpktptr->destid);
